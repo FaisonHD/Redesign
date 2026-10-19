@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+local.properties
+**/build/
+*.jks
+*.keystore
+.env*
+bridge/*.sqlite*
+**/__pycache__/
+
+bridge/config.env

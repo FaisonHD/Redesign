@@ -1,0 +1,86 @@
+name: Build Android APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set development signing key path
+        run: printf '%s\n' "LIFEHUB_SIGNING_KEYSTORE=$RUNNER_TEMP/lifehub-signing/debug.keystore" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: actions/cache@v4
+        id: signing-key
+        with:
+          path: ${{ env.LIFEHUB_SIGNING_KEYSTORE }}
+          key: lifehub-development-signing-v2
+      - name: Restore development signing key backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$(dirname "$LIFEHUB_SIGNING_KEYSTORE")"
+          artifact_id="$(gh api "repos/${{ github.repository }}/actions/artifacts?name=LifeHub-development-signing-key&per_page=100" --jq '[.artifacts[] | select(.expired == false)][0].id // empty')"
+          if [ ! -s "$LIFEHUB_SIGNING_KEYSTORE" ] && [ -n "$artifact_id" ]; then
+            gh api "repos/${{ github.repository }}/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/lifehub-signing.zip"
+            unzip -o "$RUNNER_TEMP/lifehub-signing.zip" -d "$(dirname "$LIFEHUB_SIGNING_KEYSTORE")"
+            test -s "$LIFEHUB_SIGNING_KEYSTORE"
+          fi
+          if [ ! -s "$LIFEHUB_SIGNING_KEYSTORE" ]; then
+            echo "::error::Der vorhandene LifeHub-Signaturschlüssel fehlt. Stelle den gesicherten Schlüssel wieder her."
+            exit 1
+          fi
+          actual_fingerprint="$(keytool -exportcert -keystore "$LIFEHUB_SIGNING_KEYSTORE" -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)"
+          test "$actual_fingerprint" = "199e4adb6100ae34f59fb27f7a6ea647a0ac91871e8727aac168989128712a67"
+          chmod 600 "$LIFEHUB_SIGNING_KEYSTORE"
+      - name: Test planner and Android app
+        run: bash ./gradlew --no-daemon :planner:test :app:testDebugUnitTest :app:lintDebug
+      - name: Build release APK
+        run: bash ./gradlew --no-daemon :app:assembleRelease
+      - name: Verify signed APK and package version
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/release/app-release.apk | head -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LifeHub-1.6.0-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Back up development signing key
+        uses: actions/upload-artifact@v4
+        with:
+          name: LifeHub-development-signing-key
+          path: ${{ env.LIFEHUB_SIGNING_KEYSTORE }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload Android test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LifeHub-1.6.0-android-test-reports
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
+            build/previews/
+          if-no-files-found: warn
+          retention-days: 14
+

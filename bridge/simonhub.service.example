@@ -1,0 +1,20 @@
+[Unit]
+Description=Simon Hub MCP companion
+After=network-online.target
+
+[Service]
+Type=simple
+User=simonhub
+WorkingDirectory=/opt/simonhub/bridge
+EnvironmentFile=/opt/simonhub/bridge/config.env
+ExecStart=/usr/bin/python3 /opt/simonhub/bridge/server.py --db /opt/simonhub/bridge/hub.sqlite
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/simonhub/bridge
+
+[Install]
+WantedBy=multi-user.target
